@@ -3,7 +3,6 @@ import pandas as pd
 import json,re,os
 import torch
 from torch.utils.data import Dataset, TensorDataset,DataLoader, RandomSampler, SequentialSampler
-from transformers import BertTokenizer,BertForTokenClassification,BertForSequenceClassification,BertTokenizer, BertConfig,AutoTokenizer
 from transformers import TrainingArguments, Trainer ,AdamW,get_linear_schedule_with_warmup
 from sklearn import preprocessing
 from sklearn.model_selection import train_test_split
@@ -19,7 +18,65 @@ import time
 import datetime
 import random
 from tqdm import tqdm
+from torch import nn
 
+class ElectraClassifier(nn.Module):
+
+    def __init__(self, model_name,dropout=0.5,hidden_layers=50,num_classes=1):
+
+        super(ElectraClassifier, self).__init__()
+        #discriminator = ElectraForPreTraining.from_pretrained(model_name)
+        self.electra =ElectraModel.from_pretrained(model_name)
+        self.classifier = nn.Linear(self.electra.config.hidden_size, num_classes)
+
+        self.criterion = nn.BCELoss()
+        
+        #self.dropout = nn.Dropout(dropout)
+        #self.linear = nn.Linear(2, hidden_layers)
+        #self.linear2 = nn.Linear(hidden_layers, num_classes)
+        #self.relu = nn.ReLU()
+        #self.soft = nn.Softmax() #.ReLU()
+
+    def forward(self, input_id, mask,type_ids,lbl):
+
+        
+        try:
+            if input_id is not None:
+                output = self.electra(input_ids= input_id, attention_mask=mask,token_type_ids=type_ids) #labels=lbl
+                #print("electra output",output)
+                output = self.classifier(output.last_hidden_state[:, 0])
+                #print("before ",output)
+
+                output = torch.sigmoid(output)
+                output = output.flatten().to(torch.float32)
+                #print("after  ",output)
+                
+                loss = 0
+                if lbl is not None:
+                    lbl=lbl.to(torch.float32)
+                    loss = self.criterion(output, lbl)  
+            else:
+                print(f"NAN input! input_ids: {input_id} \t label: {lbl}")        
+        except:
+            print(f"ERROR! input_ids: {input_id} \t label: {lbl}")        
+        return loss, output
+
+        """dropout_output = self.dropout(pooled_output)
+        print("dropout_output",dropout_output)
+
+        linear_output = self.linear(dropout_output)
+        print("linear_1_output",linear_output)
+
+        linear_2_output = self.linear2(linear_output)
+        print("linear_2_output",linear_2_output)
+
+
+
+        #final_layer = self.relu(linear_2_output)
+        final_layer = self.soft(linear_2_output)
+        print("final_layer",final_layer)"""
+
+        return final_layer
 class EarlyStopping(object):
     def __init__(self, mode='min', min_delta=0, patience=10, percentage=False):
         self.mode = mode
@@ -69,41 +126,32 @@ class EarlyStopping(object):
             if mode == 'max':
                 self.is_better = lambda a, best: a >= best + (
                             best * min_delta / 100)
-class Ner_Data_Sentence(Dataset):
+class Data_Sentence(Dataset):
 
-    def __init__(self, data_file):
-        self.data = self.read_data(data_file)
-        sents, tags_li = [], [] # list of lists
-        self.labels___=[]
-        for sent in self.data:
-            words = [word_pos[0] for word_pos in sent]
-            tags = [word_pos[1] for word_pos in sent]
-            #print(f"words: {words}  labels: {tags}")
-            sents.append(["[CLS]"] + words + ["[SEP]"])
-            tags_li.append(["<pad>"] + tags + ["<pad>"])
-        self.sents, self.tags_li = sents, tags_li
-
-        self.labels___=self.unique([item for sublist in self.tags_li for item in sublist])
+    def __init__(self, df,tknrz):
         
-#         print("dataloader initialized")
+        #print(f"values: {self.data['label']}")
+        self.sentences=[str(x).strip() for x in df['text'] if len(str(x).strip())>0]
+        self.labels=[x for x in df['label']]
+        self._labels=self.unique(self.labels)
+        #print("init_sent",self.sentences)
+        #print("init_label",self.labels)
+        self.tokenizer=tknrz
+        
+#       print("dataloader initialized")
         
         
     def read_data(self,filename):
-        sentences = []
-        with open(filename, 'r', encoding='UTF-8') as f:
-            sentence = []
-            for line in f:
-                line = line.strip()
-                if len(line) != 0:
-                    sentence.append((line.split(' ')[0], line.split(' ')[-1]))
-                    #sentence.append((line.split(' ')[0], line.split(' ')[-1]))
-                elif len(sentence) != 0:
-                    sentences.append(sentence)
-                    sentence = []
-        self.tags = list(set(word_label[1] for sent in sentences for word_label in sent))
-        return sentences 
-    def unique(self,list1):
-        # initialize a null list
+        data=pd.read_csv(filename)
+        
+        self._labels=data['label_sexist'].unique()
+        data['label_sexist']=data['label_sexist'].map(self.label_to_ids)
+        data=data.filter(items=["text_clean_final","label_sexist"],axis=1)
+        data.columns=['text','label']
+        #print("data",data)
+        return data
+
+    def unique(self,list1):        # initialize a null list
         unique_list = []
         # traverse for all elements
         for x in list1:
@@ -114,117 +162,37 @@ class Ner_Data_Sentence(Dataset):
     
     @property  
     def label_to_ids(self):
-        return {tag:idx for idx, tag in enumerate(self.labels___)}
+        return {tag:idx for idx, tag in enumerate(self._labels)}
 
     
     @property
     def ids_to_label(self):
-        return {idx:tag for idx, tag in enumerate(self.labels___)}
+        return {idx:tag for idx, tag in enumerate(self._labels)}
 
     def __len__(self):
-        return len(self.data)
+        return len(self.sentences)
 
     def __getitem__(self, idx):
         #print(idx)
-        #print(f'sentence: id:{self.data["text"][idx]}')
-        words, word_labels = self.sents[idx], self.tags_li[idx]
-        #sentence = str(self.data['text'][idx])
-        #word_labels = [self.data['label'][idx]] #.split(" ") 
-        #print(f'sentence: id:{self.data["text"][idx]} \nsen_code: {sen_code} \nword_ids:{word_ids}')
-        input_ids, labels = [], [] # list of ids
-        is_heads = [] # list. 1: the token is the first piece of a word
-        for w, t in zip(words, word_labels):
-            tokens = tokenizer.tokenize(w) if w not in ("[CLS]", "[SEP]") else [w]
-            xx = tokenizer.convert_tokens_to_ids(tokens)
+        #print(f'sentence: sents: idx: {idx}  {self.sentences[idx]}\nlabels: {self.labels[idx]}')
+        sents, lbls = self.sentences[idx], self.labels[idx]
 
-            is_head = [1] + [0]*(len(tokens) - 1)
-            if t.strip()=='':
-                t='O'
-            t = [t] + ["<pad>"] * (len(tokens) - 1)  # <PAD>: no decision
-            #print(self.label_to_ids)
-            yy = [self.label_to_ids[each] for each in t]  # (T,)
-
-            input_ids.extend(xx)
-            is_heads.extend(is_head)
-            labels.extend(yy)
-
-        assert len(input_ids)==len(labels)==len(is_heads), "len(x)={}, len(y)={}, len(is_heads)={}".format(len(input_ids), len(labels), len(is_heads))
-
-        # seqlen
-        seqlen = len(labels)
-
-        # to string
-        words = ' '.join(words)
-        tags = ' '.join(word_labels)
-        # step 4: turn everything into PyTorch tensors
-        item = {} #{key: torch.as_tensor(val) for key, val in sen_code.items()}
-        item['input_ids']=input_ids#torch.as_tensor(input_ids)
-        item['labels'] = labels #torch.as_tensor(labels)
-        item['words']=words
-        item['originalLabels']=tags
-        item['attention_mask']=is_heads
-        item['seqlen']=seqlen
-        return item
-
-class Ner_Data_Token(Dataset):
-
-    def __init__(self, data):
-        self.data = data
-#         print("dataloader initialized")
-        
-        
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-#         print(idx)
-        #print(f'sentence: id:{self.data["text"][idx]}')
-        sentence = str(self.data['text'][idx])
-        word_labels = [self.data['label'][idx]] #.split(" ") 
-          
-        sen_code = tokenizer.encode_plus(sentence,       #tokenizer.encode_plus(..)
+         
+        sen_code = self.tokenizer.encode_plus(sents,       #tokenizer.encode_plus(..)
             add_special_tokens=True,  # Add [CLS] and [SEP]
-            max_length = 64,  # maximum length of a sentence
+            max_length = 128,  # maximum length of a sentence
             pad_to_max_length=True,  # Add [PAD]s
             return_attention_mask = True,  # Generate the attention mask
             truncation=True,
             #return_tensors = 'pt'
             )
-             
-        #print('sen_code',sen_code)    
-        labels = []
-        word_ids = sen_code['input_ids']
-        #print(f'sentence: id:{self.data["text"][idx]} \nsen_code: {sen_code} \nword_ids:{word_ids}')
-        first_token=False
-        for i, label in enumerate(word_labels):
-              #sen_code.word_ids(batch_index=i)
-            previous_word_idx = None
-            label_ids = []
-            for word_idx in word_ids:
-                # Special tokens have a word id that is None. We set the label to -100 so they are automatically
-                # ignored in the loss function.
-                if word_idx is None or word_idx in [101,102]:
-                    label_ids.append(-100)
-                # We set the label for the first token of each word.
-                elif  first_token==False and word_idx != previous_word_idx :
-                    label_ids.append(label)#(label_to_ids[label])
-                    first_token=True
-                # For the other tokens in a word, we set the label to either the current label or -100, depending on
-                # the label_all_tokens flag.
-                else:
-                    label_ids.append(-100)
-                previous_word_idx = word_idx
 
-            labels.append(label_ids)
-        
-        
-        #print('labels',labels)
 
-        # step 4: turn everything into PyTorch tensors
         item = {key: torch.as_tensor(val) for key, val in sen_code.items()}
-        item['labels'] = torch.as_tensor(labels)
-        item['token']=sentence
+        item['labels'] = torch.as_tensor(lbls)
+        item['originalLabels'] = lbls
+        item['sentences']=sents
+
         return item
 
 
@@ -232,7 +200,7 @@ class MetricsTracking():
   """
   In order make the train loop lighter I define this class to track all the metrics that we are going to measure for our model.
   """
-  def __init__(self,title,ids_ToLabel,tknzr:BertTokenizer):
+  def __init__(self,title,ids_ToLabel,run_message):
 
     self.total_acc = 0
     self.total_f1 = 0
@@ -246,22 +214,19 @@ class MetricsTracking():
     self.tags=[]
     self.title=title
     self.idsToLabel=ids_ToLabel
-    self.tokenizer=tknzr
     self.current_pred=[]
     self.current_tags=[]
     self.current_words=[]
+    self.runMessage=run_message
 
   def getClassificationReport(self):
-        #print("total_predictions",self.total_predictions)
-        #print("total_label",self.current_tags)
-
         tags = list(set(w for w in self.current_tags[1:-1]))
         #print('tags',tags)
         return classification_report(self.current_tags, self.current_pred,labels=tags, zero_division=0)
 
   def save_results(self,predictions, labels ,inputs,epoch):
-    output_dir = f'model_save/results'
-    f_name=os.path.join(output_dir, f'details_{self.title}_{runMessage}.txt')
+    output_dir = f'SEMEVAL/model_save/results'
+    f_name=os.path.join(output_dir, f'details_{self.title}_{self.runMessage}.txt')
     with open(f_name, 'a') as fout:
         for idx,item  in enumerate(list(zip(inputs,labels, predictions))):
                 token=item[0]
@@ -272,7 +237,7 @@ class MetricsTracking():
                 
     fout.close()    
 
-  def update(self, predictions, labels ,inputs,words,heads,tags,epoch, ignore_token = -100):
+  def update(self, predictions, labels ,inputs,words=[],tags=[],epoch=0, ignore_token = -100):
     '''
     Call this function every time you need to update your metrics.
     Where in the train there was a -100, were additional token that we dont want to label, so remove them.
