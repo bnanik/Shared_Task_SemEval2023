@@ -39,6 +39,7 @@ es_patience=1
 weight_decay=0.01
 no_decay = ['bias', 'LayerNorm.weight']
 labels__=['not sexist','sexist']
+checkpoint_name='my_checkpoint.pt'
 global label_to_ids,ids_to_label
 label_to_ids = {'not sexist':0,'sexist':1}
 ids_to_label = {0:'not sexist',1:'sexist'}
@@ -140,8 +141,9 @@ def padding(batch):
 
     return item
 
-def train(model:ElectraClassifier,tokenizer:ElectraTokenizer,train_dataloader,validation_dataloader,device,ids_to_label,seed=42):
+def train(model:ElectraClassifier,tokenizer:ElectraTokenizer,train_dataloader,validation_dataloader,device,ids_to_label,seed=42,do_train=False):
     print("optimizer ...")
+
     optimizer_grouped_parameters = [
         {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': weight_decay},
         {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
@@ -157,181 +159,197 @@ def train(model:ElectraClassifier,tokenizer:ElectraTokenizer,train_dataloader,va
                                             num_warmup_steps = warmeup_step, # Default value in run_glue.py
                                             num_training_steps = num_training_steps)                             
     training_stats = []
-        
-    total_t0 = time.time()
-    allpreds = []
-    alllabels = []
-    model.to(device)
-    es=EarlyStopping(patience=es_patience)
-    # For each epoch...
-    for epoch_i in range(0, num_epochs):
-    
-        print("")
-        print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, num_epochs))
-        print('Training ...')
-        t0 = time.time()
-        total_train_loss = 0
-        model.train()
-        sqz=1
-        for step,batch_item in enumerate(train_dataloader):
-            if step % 40 == 0 and not step == 0:
-                elapsed = format_time(time.time() - t0)
-                print('  Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.'.format(step, len(train_dataloader), elapsed))
-            b_input_ids =batch_item['input_ids'].to(device)
-            b_token_type_ids=batch_item['token_type_ids'].to(device)
-            b_input_mask = batch_item['attention_mask'].to(device)
-            b_labels = batch_item['labels'].to(device)
-            #print(f"labels:{b_labels}   ")
-            model.zero_grad()        
-            outputs = model(b_input_ids,b_input_mask,b_token_type_ids,b_labels)
-            loss, logits=outputs[:2] 
-            #print('train lss',loss)
-            #print('train lgits',logits)
-            predictions = logits.argmax(dim= -1) 
-            #compute metrics
-            #train_metrics.update(predictions, batch_label)
-            total_train_loss += loss#.item()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
-        avg_train_loss = total_train_loss / len(train_dataloader)            
-        training_time = format_time(time.time() - t0)
-        print("")
-        print("  Average training loss: {0:.2f}".format(avg_train_loss))
-        print("  Training epcoh took: {:}".format(training_time))
-            
-        # ========================================
-        #               Validation
-        # ========================================
-        # After the completion of each training epoch, measure our performance on
-        # our validation set.
-
-        print("")
-        print("Running Validation...")
-
-        
-        t0 = time.time()
-        model.eval()
-        dev_metrics = MetricsTracking('dev',ids_to_label,run_message=runMessage)
-
-        # Tracking variables 
-        total_eval_accuracy = 0
-        total_eval_loss = 0
-        nb_eval_steps = 0
+    PATH=f"model/{seed}_{checkpoint_name}"
+    if do_train==False:
+        try:
+            model.load_state_dict(torch.load(PATH))
+        except:
+            print(f"The model {PATH} does not exist")  
+    else:            
+        total_t0 = time.time()
         allpreds = []
         alllabels = []
-        last_batch=[]
-        allWords,allHeads,allTags,allInputs=[],[],[],[]
-        with torch.no_grad(): 
-            # Evaluate data for one epoch
-            for batch_item in validation_dataloader:
-                last_batch=batch_item
-                b_input_ids = batch_item['input_ids'].to(device)
+        model.to(device)
+        es=EarlyStopping(patience=es_patience)
+        criteion=nn.CrossEntropyLoss(ignore_index=0)
+        # For each epoch...
+        for epoch_i in range(0, num_epochs):
+        
+            print("")
+            print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, num_epochs))
+            print('Training ...')
+            t0 = time.time()
+            total_train_loss = 0
+            model.train()
+            sqz=1
+            for step,batch_item in enumerate(train_dataloader):
+                if step % 40 == 0 and not step == 0:
+                    elapsed = format_time(time.time() - t0)
+                    print('  Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.'.format(step, len(train_dataloader), elapsed))
+                b_input_ids =batch_item['input_ids'].to(device)
                 b_token_type_ids=batch_item['token_type_ids'].to(device)
                 b_input_mask = batch_item['attention_mask'].to(device)
-                
                 b_labels = batch_item['labels'].to(device)
-                b_sentences=batch_item['sentences']
-                #assert(len(b_input_ids)==len(b_labels)==len(b_input_mask)), "the size of the inpits are not the same to feed in the model"
-                outputs = model(b_input_ids, 
-                                b_input_mask,
-                                b_token_type_ids,
-                                b_labels)
-                loss, logits=outputs.loss,outputs.logits #[:2]    
-                
-                predictions = logits.argmax(dim= -1)
-                predictions = predictions.detach().cpu().numpy()
-                label_ids = b_labels.to('cpu').numpy()
-                #print('batch_input ids',b_input_ids)
-                #print('batch_labels',b_labels)
-                #print('batch_predictions',predictions)
-                # Accumulate the validation loss.
-                total_eval_loss += loss#.item()
-
-                allpreds.extend(predictions)
-                allInputs.extend(b_input_ids)
-                alllabels.extend(label_ids)
-                allWords.extend(b_sentences)
-                #allTags.extend(b_tags)
-                # Move logits and labels to CPU
-                #logits = logits.detach().cpu().numpy()
-                #label_ids = b_labels.to('cpu').numpy()
-
-                
-
-                # Calculate the accuracy for this batch of test sentences, and
-                # accumulate it over all batches.
-                #total_eval_accuracy += flat_accuracy(logits, label_ids)
-                
-
-                #alllabels.extend(label_ids.flatten())
-                #allpreds.extend(np.argmax(logits, axis=1).flatten())
-                
-        
-        dev_metrics.update(allpreds, alllabels,allInputs,allWords,allHeads,allTags,epoch_i)
-        #train_results = train_metrics.return_avg_metrics(len(train_dataloader))
-        dev_results = dev_metrics.return_avg_metrics(1)#len(validation_dataloader))
-        
-        #print(f"TRAIN \nMetrics {train_results}\n" ) 
-        print(f"VALIDATION \nMetrics{dev_results}\n" )
-        
-        
-        # Report the final accuracy for this validation run.
-        avg_val_accuracy = dev_results['acc'] #total_eval_accuracy / len(validation_dataloader)
-        print("Validation  Accuracy: {0:.2f}".format(avg_val_accuracy))
-
-        # Calculate the average loss over all of the batches.
-        avg_val_loss = total_eval_loss / len(validation_dataloader)
-        P,R,F1 = dev_results['precision'],dev_results['recall'],dev_results['f1'] #flat_scores(allpreds, alllabels)
-
-        # Measure how long the validation run took.
-        validation_time = format_time(time.time() - t0)
-        
-        print("  Validation Loss: {0:.2f}".format(avg_val_loss))
-        print("  Validation took: {:}".format(validation_time))
-        
-        
-        print('Evaluation classification report:')
-        print(dev_metrics.getClassificationReport())
-        #print(classification_report(alllabels, allpreds, zero_division=0))
-
-        ## early stopping using the loss on the dev set -> break from the epoch loop
-        if es.step(avg_val_loss.to('cpu')):
-            print(f'BREAK from epoch loop with {avg_val_loss} loss in epoch {epoch_i}')
+                #print(f"labels:{b_labels}   ")
+                model.zero_grad()        
+                outputs = model(b_input_ids,b_input_mask,b_token_type_ids,b_labels)
+                logits,y_hat,y=outputs[0],outputs[1],outputs[2] 
+                logits_t=logits.view(-1,logits.shape[-1])
+                y_hat=y_hat.view(-1)
+                loss=criteion(logits_t,y)
+                print('train loss',loss)
+                #print('train lgits',logits_t)
+                predictions = logits_t #logits.argmax(dim= -1) 
+                #compute metrics
+                #train_metrics.update(predictions, batch_label)
+                total_train_loss += loss#.item()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                scheduler.step()
+            avg_train_loss = total_train_loss / len(train_dataloader)            
+            training_time = format_time(time.time() - t0)
             
-            model=lastModel
+
+            torch.save(model.state_dict(), PATH)
+            print("")
+            print("  Average training loss: {0:.2f}".format(avg_train_loss))
+            print("  Training epcoh took: {:}".format(training_time))
+                
+            # ========================================
+            #               Validation
+            # ========================================
+            # After the completion of each training epoch, measure our performance on
+            # our validation set.
+
+            print("")
+            print("Running Validation...")
+
             
-            break
-        else:
-            lastModel=model
+            t0 = time.time()
+            model.eval()
+            dev_metrics = MetricsTracking('dev',ids_to_label,run_message=runMessage)
 
-        # Record all statistics from this epoch.
-        training_stats.append(
-            {
-                'epoch': epoch_i + 1,
-                'Training Loss': avg_train_loss,
-                'Valid. Loss': avg_val_loss,
-                'Valid. Accur.': avg_val_accuracy,
-                'Valid_Precision_macro':P,
-                'Valid_Recall_macro':R,
-                'Valid_F1_macro':F1,
-                #'Test. Loss': avg_test_loss,
-                #'Test. Accur.': avg_test_accuracy,
-                'Training Time': training_time,
-                'Valididation Time': validation_time,
-                #'Test Time': test_time
-                'num_patience':es_patience,
-                'seed_val':seed,
-                'run':f'{runMessage}#S{seed}#P{es_patience}'
-            }
-        )
-        
-    print("")
-    print("Training complete!")
+            # Tracking variables 
+            total_eval_accuracy = 0
+            total_eval_loss = 0
+            nb_eval_steps = 0
+            allpreds = []
+            alllabels = []
+            last_batch=[]
+            allWords,allHeads,allTags,allInputs=[],[],[],[]
+            with torch.no_grad(): 
+                # Evaluate data for one epoch
+                for batch_item in validation_dataloader:
+                    last_batch=batch_item
+                    b_input_ids = batch_item['input_ids'].to(device)
+                    b_token_type_ids=batch_item['token_type_ids'].to(device)
+                    b_input_mask = batch_item['attention_mask'].to(device)
+                    
+                    b_labels = batch_item['labels'].to(device)
+                    b_sentences=batch_item['sentences']
+                    print(f"original labels{batch_item['labels']}\nb_labels:{b_labels}")
+                    #assert(len(b_input_ids)==len(b_labels)==len(b_input_mask)), "the size of the inpits are not the same to feed in the model"
+                    outputs = model(b_input_ids, 
+                                    b_input_mask,
+                                    b_token_type_ids,
+                                    b_labels)
+                    logits,y_hat,y=outputs[0],outputs[1] ,outputs[2]  
+                    #print(f"outputs {outputs}\nloss:{loss}\nlogits:{logits}")
+                    #logits_t = logits#.argmax(dim= -1)
+                    
+                    #predictions = logits_t.detach().cpu()
+                    #label_ids = b_labels.detach().cpu()
+                    #print('batch_input ids',b_input_ids)
+                    #print('batch_labels',b_labels)
+                    #print('batch_predictisssssons',predictions)
+                    # Accumulate the validation loss.
+                    #total_eval_loss += loss#.item()
+                    #print(f"labels:{label_ids}\nlogits:{logits}\nlogits_t: {logits_t}\npredictions: {predictions}")
+                    allpreds.extend(y_hat)#.numpy().tolist())
+                    allInputs.extend(b_input_ids)
+                    alllabels.extend(y)#.numpy().tolist())
+                    allWords.extend(b_sentences)
+                    #allTags.extend(b_tags)
+                    # Move logits and labels to CPU
+                    #logits = logits.detach().cpu().numpy()
+                    #label_ids = b_labels.to('cpu').numpy()
 
-    print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))                                                                                        
-    saveModel(model=model,tokenizer=tokenizer,stats=training_stats,text=f'{runMessage}#S{seed}#P{es_patience}')
+                    
+
+                    # Calculate the accuracy for this batch of test sentences, and
+                    # accumulate it over all batches.
+                    #total_eval_accuracy += flat_accuracy(logits, label_ids)
+                    
+
+                    #alllabels.extend(label_ids.flatten())
+                    #allpreds.extend(np.argmax(logits, axis=1).flatten())
+                    
+            
+            dev_metrics.update(allpreds, alllabels,allInputs,allWords,allHeads,allTags,epoch_i)
+            #train_results = train_metrics.return_avg_metrics(len(train_dataloader))
+            dev_results = dev_metrics.return_avg_metrics(1)#len(validation_dataloader))
+            
+            #print(f"TRAIN \nMetrics {train_results}\n" ) 
+            print(f"VALIDATION \nMetrics{dev_results}\n" )
+            
+            
+            # Report the final accuracy for this validation run.
+            avg_val_accuracy = dev_results['acc'] #total_eval_accuracy / len(validation_dataloader)
+            print("Validation  Accuracy: {0:.2f}".format(avg_val_accuracy))
+
+            # Calculate the average loss over all of the batches.
+            avg_val_loss = total_eval_loss / len(validation_dataloader)
+            P,R,F1 = dev_results['precision'],dev_results['recall'],dev_results['f1'] #flat_scores(allpreds, alllabels)
+
+            # Measure how long the validation run took.
+            validation_time = format_time(time.time() - t0)
+            
+            print("  Validation Loss: {0:.2f}".format(avg_val_loss))
+            print("  Validation took: {:}".format(validation_time))
+            
+            
+            print('Evaluation classification report:')
+            print(dev_metrics.getClassificationReport())
+            #print(classification_report(alllabels, allpreds, zero_division=0))
+
+            ## early stopping using the loss on the dev set -> break from the epoch loop
+            if es.step(avg_val_loss.to('cpu')):
+                print(f'BREAK from epoch loop with {avg_val_loss} loss in epoch {epoch_i}')
+                
+                model=lastModel
+                
+                break
+            else:
+                lastModel=model
+
+            # Record all statistics from this epoch.
+            training_stats.append(
+                {
+                    'epoch': epoch_i + 1,
+                    'Training Loss': avg_train_loss,
+                    'Valid. Loss': avg_val_loss,
+                    'Valid. Accur.': avg_val_accuracy,
+                    'Valid_Precision_macro':P,
+                    'Valid_Recall_macro':R,
+                    'Valid_F1_macro':F1,
+                    #'Test. Loss': avg_test_loss,
+                    #'Test. Accur.': avg_test_accuracy,
+                    'Training Time': training_time,
+                    'Valididation Time': validation_time,
+                    #'Test Time': test_time
+                    'num_patience':es_patience,
+                    'seed_val':seed,
+                    'run':f'{runMessage}#S{seed}#P{es_patience}'
+                }
+            )
+            
+        print("")
+        print("Training complete!")
+
+        print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))                                                                                        
+        saveModel(model=model,tokenizer=tokenizer,stats=training_stats,text=f'{runMessage}#S{seed}#P{es_patience}')
+    
     return model
     
     
@@ -347,7 +365,7 @@ def evaluate(model:ElectraModel,test_dataloader,ids_to_label,device,seed=42):
 
     t0 = time.time()
     model.eval()
-    testMetric=MetricsTracking('test',ids_to_label)
+    testMetric=MetricsTracking('test',ids_to_label,run_message=runMessage)
     # Tracking variables 
     total_test_accuracy = 0
     total_test_loss = 0
@@ -366,14 +384,16 @@ def evaluate(model:ElectraModel,test_dataloader,ids_to_label,device,seed=42):
             outputs = model(b_input_ids, 
                                 b_input_mask,
                                 b_token_type_ids,
-                                labels=b_labels)
-        loss, logits=outputs[:2]    
+                                b_labels)
+        logits,y_hat,y=outputs[0],outputs[1],outputs[2]    
         # Accumulate the validation loss.
+        loss=0
         total_test_loss += loss #.item()
 
-        t_predictions = logits.argmax(dim= -1)
-        t_predictions = t_predictions.detach().cpu().numpy()
-        label_ids = b_labels.to('cpu').numpy()
+        #t_predictions = logits#.argmax(dim= -1)
+        t_predictions = y_hat#.numpy().tolist()
+        label_ids = y#.numpy().tolist()
+        print(f"labels:{b_labels}\npredictions:{t_predictions}")
         test_allpreds.extend(t_predictions)
         test_allInputs.extend(b_input_ids)
         test_alllabels.extend(label_ids)
@@ -429,10 +449,11 @@ def read_data(filename):
         return data,ids_to_label,label_to_ids
 def main():
     max_len=0
+    is_train=False
     # cuda avaliability?
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     #torch.manual_seed(seed_val)
-    #model definition
+    #model definitison
     model_id=  "google/electra-base-discriminator" #"bhadresh-savani/electra-base-emotion" #  "google/electra-small-discriminator"
     tokenizer = ElectraTokenizer.from_pretrained(model_id)
     electra_config = ElectraConfig.from_pretrained(model_id)
@@ -441,27 +462,12 @@ def main():
     
     
     #preparing dataframes
-    train_file='./data/clean_data_v2.csv'
-    #dev_file='dev.txt'
-    test_file='./data/dev_task_a_entries.csv'
-    """df_trainDS=pd.read_csv('baseline_train.csv')
-    df_devDS=pd.read_csv('baseline_dev.csv')
-    df_testDS=pd.read_csv('baseline_test.csv')"""
-    
-    #datasets
-    """trainDS = NerDataset(df_trainDS)
-    devDS = NerDataset(df_devDS)
-    testDS = NerDataset(df_testDS)
-    """
+    local="./data/"
+    #slocal=""
+    train_file=f'{local}clean_data_v2.csv'
+    test_file=f'{local}dev_task_a_entries.csv'
+  
     df,ids_to_label,label_to_ids=read_data(train_file)
-    
-   
-    #devDS = Ner_Data_Sentence(dev_file)
-    #testDS = Data_Sentence(test_file)
-
-    #print(trainDS)
-    #print(trainDS[2])
-
 
     #print(len(DS[1]['input_ids']))
     #print(len(DS[1]['sentences']))
@@ -471,8 +477,6 @@ def main():
     #print(DS[1]['originalLabels'])
     #print(DS[1]['labels'])
 
-
-    
     results=[]
     # Set the seed value all over the place to make this reproducible.
     for seed_val in seed_vals:
@@ -482,10 +486,7 @@ def main():
         torch.cuda.manual_seed_all(seed_val)
         trainDF, devDF, testDF = np.split(df.sample(frac=1, random_state=42), 
                                      [int(.8*len(df)), int(.9*len(df))])
-        #DS = Data_Sentence(train_file,tokenizer)
-        #trainDS, devDS, testDS = np.split(DS.data.sample(frac=1, random_state=42), [int(.8*len(DS)), int(.9*len(DS))])
         trainDS, devDS, testDS=Data_Sentence(trainDF,tokenizer), Data_Sentence(devDF,tokenizer),Data_Sentence(testDF,tokenizer)
-        #print(trainDS[0])
         # Create the DataLoaders for our training and validation sets.
         # We'll take training samples in random order. 
         train_dataloader = DataLoader(
@@ -512,7 +513,8 @@ def main():
                 )        
 
         model=ElectraClassifier(model_name=model_id)
-        model=train(model=model,tokenizer=tokenizer,train_dataloader=train_dataloader,validation_dataloader=validation_dataloader,device=device,ids_to_label=ids_to_label,seed=seed_val)
+        model=train(model=model,tokenizer=tokenizer,train_dataloader=train_dataloader,validation_dataloader=validation_dataloader,
+            device=device,ids_to_label=ids_to_label,seed=seed_val,do_train=is_train)
         
         evaluate(model=model,test_dataloader=test_dataloader,device=device,ids_to_label=ids_to_label,seed=seed_val)
 

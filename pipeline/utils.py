@@ -22,44 +22,60 @@ from torch import nn
 
 class ElectraClassifier(nn.Module):
 
-    def __init__(self, model_name,dropout=0.5,hidden_layers=50,num_classes=1):
+    def __init__(self, model_name,dropout=0.5,hidden_layers=50,num_classes=2):
 
         super(ElectraClassifier, self).__init__()
         #discriminator = ElectraForPreTraining.from_pretrained(model_name)
         self.electra =ElectraModel.from_pretrained(model_name)
         self.classifier = nn.Linear(self.electra.config.hidden_size, num_classes)
 
-        self.criterion = nn.BCELoss()
+        self.criterion = nn.BCEWithLogitsLoss()
         
         #self.dropout = nn.Dropout(dropout)
         #self.linear = nn.Linear(2, hidden_layers)
         #self.linear2 = nn.Linear(hidden_layers, num_classes)
         #self.relu = nn.ReLU()
-        #self.soft = nn.Softmax() #.ReLU()
+        self.sig=nn.Sigmoid()
 
     def forward(self, input_id, mask,type_ids,lbl):
 
+        #print(f"input_id:{input_id}\nlabel:{lbl}")
         
+        logits=[]
+        y_hat=[]
+
         try:
             if input_id is not None:
-                output = self.electra(input_ids= input_id, attention_mask=mask,token_type_ids=type_ids) #labels=lbl
-                #print("electra output",output)
-                output = self.classifier(output.last_hidden_state[:, 0])
-                #print("before ",output)
+                if self.training:
+                    self.electra.train()
+                    output = self.electra(input_ids= input_id, attention_mask=mask,token_type_ids=type_ids) #labels=lbl
+                    output_01=output.last_hidden_state[:, 0]
+                else:
+                    self.electra.eval()
+                    #with torch.no_grad:
+                    output = self.electra(input_ids= input_id, attention_mask=mask,token_type_ids=type_ids) #labels=lbl
+                    output_01=output.last_hidden_state[:, 0]
 
-                output = torch.sigmoid(output)
-                output = output.flatten().to(torch.float32)
-                #print("after  ",output)
                 
-                loss = 0
-                if lbl is not None:
-                    lbl=lbl.to(torch.float32)
-                    loss = self.criterion(output, lbl)  
+                logits=self.classifier(output_01)
+                y_hat=logits.argmax(-1)
+                
+                #output_0_0=torch.sigmoid(output.last_hidden_state[:, 0])
+                #print("electra output",output)
+                #output_0 = self.classifier(output_0_0)
+                
+                #print("before ",output)    
+                #print(f"output_0_clssifier:{output_0} ")
+                #output_0=output_0.argmax(1)
+                #print(f"output_0_argmax:{output_0} ")
+                #print(f"output_0_sigmoid :{output} lbl:{lbl}")
+                    
             else:
                 print(f"NAN input! input_ids: {input_id} \t label: {lbl}")        
-        except:
-            print(f"ERROR! input_ids: {input_id} \t label: {lbl}")        
-        return loss, output
+        except Exception as e:
+            print(f"ERROR! input_ids: {input_id} \t label: {lbl}\n {e}") 
+                   
+        return logits, y_hat,lbl
 
         """dropout_output = self.dropout(pooled_output)
         print("dropout_output",dropout_output)
@@ -76,7 +92,7 @@ class ElectraClassifier(nn.Module):
         final_layer = self.soft(linear_2_output)
         print("final_layer",final_layer)"""
 
-        return final_layer
+        #return final_layer
 class EarlyStopping(object):
     def __init__(self, mode='min', min_delta=0, patience=10, percentage=False):
         self.mode = mode
@@ -134,6 +150,8 @@ class Data_Sentence(Dataset):
         self.sentences=[str(x).strip() for x in df['text'] if len(str(x).strip())>0]
         self.labels=[x for x in df['label']]
         self._labels=self.unique(self.labels)
+        #self.labels=torch.from_numpy(np.asarray(self.labels)).type(torch.FloatTensor)
+        
         #print("init_sent",self.sentences)
         #print("init_label",self.labels)
         self.tokenizer=tknrz
@@ -189,7 +207,7 @@ class Data_Sentence(Dataset):
 
 
         item = {key: torch.as_tensor(val) for key, val in sen_code.items()}
-        item['labels'] = torch.as_tensor(lbls)
+        item['labels'] =lbls # torch.as_tensor(lbls)
         item['originalLabels'] = lbls
         item['sentences']=sents
 
@@ -220,9 +238,9 @@ class MetricsTracking():
     self.runMessage=run_message
 
   def getClassificationReport(self):
-        tags = list(set(w for w in self.current_tags[1:-1]))
+        #tags = list(set(w for w in self.current_tags[1:-1]))
         #print('tags',tags)
-        return classification_report(self.current_tags, self.current_pred,labels=tags, zero_division=0)
+        return classification_report(self.total_predictions,self.total_label, zero_division=0)
 
   def save_results(self,predictions, labels ,inputs,epoch):
     output_dir = f'SEMEVAL/model_save/results'
@@ -250,22 +268,23 @@ class MetricsTracking():
     self.current_tags=[]
     self.current_words=[]
     self.words.extend(words)
-    self.heads.extend(heads)
     self.tags.extend(tags)
     n_labels=[]
     n_predictions=[]
     n_input_ids=[]
     #print('words',f'{words} tag:{tags}  pred:{predictions} labels:{labels}  heads:{heads}')
-    for idx,item  in enumerate(list(zip(words,tags, predictions,heads))):
+    for idx,item  in enumerate(list(zip(words,labels, predictions))):
 
                 token=item[0]
                 tag=item[1]
                 y_hat=item[2]
-                hd=item[3]
-                preds=[self.idsToLabel[x] for x,y in zip(y_hat,hd) if y==1]
+                #preds=[self.idsToLabel[x] for x,y in zip(y_hat,hd) if y==1]
                 print('input token',f'{token} tag:{tag}  pred:{y_hat}')
-                try:
-                    assert len(preds)==len(token.split())==len(tag.split())
+                n_labels.append(tag)
+                n_predictions.append(y_hat)
+                n_input_ids.append(token)
+                """try:
+                    #assert len(preds)==len(token.split())==len(tag.split())
                     for i,row in enumerate(list(zip(token.split()[1:-1],tag.split()[1:-1],preds[1:-1]))):
                         tk=row[0]
                         tg=row[1]
@@ -289,7 +308,7 @@ class MetricsTracking():
                             print("error")
                 except:
                     print(f'ERROR!  input token',f'{token} tag:{tag}  pred:{y_hat}') 
-                    continue           
+                    continue """          
 
     
     acc = accuracy_score(n_labels,n_predictions)
@@ -309,7 +328,7 @@ class MetricsTracking():
     self.current_pred.extend(n_predictions)
 
     
-    self.save_results(n_predictions,n_labels,n_input_ids,epoch)
+    #self.save_results(n_predictions,n_labels,n_input_ids,epoch)
 
     #print("end updating metrics ...")
 
