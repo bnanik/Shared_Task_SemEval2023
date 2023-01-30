@@ -5,6 +5,7 @@ We developed six models in three different paradigms, namely **further pretraini
 The whole codes relted to pretrining is vailable in ELECTRA-Pretraining folder. The code is from the official ELECTRA github repo (https://github.com/google-research/electra). To run the pretraining process:  
     1.1 build the dataset  
       > python build_pretraining_dataset.py   --corpus-dir ./corpus  --vocab-file vocab.txt  --output-dir pretrain_tfrecords  --max-seq-length 128   --blanks-separate-docs False   --no-lower-case   --num-processes 10  
+      * The corpus is needed to be in the corpus folder with the name of "train_data.txt"  
     
     1.2 run the pretraining based o the parameters json file  
       > python run_pretraining.py --data-dir .  --model-name electra_small --hparams "hparams-small.json"
