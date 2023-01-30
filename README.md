@@ -15,9 +15,12 @@ The whole codes relted to pretrining is vailable in ELECTRA-Pretraining folder. 
 2. **Typical Finetuning:** <br />
 The main python file is electra_nn for this purpose. It calles other dependecies and related files.
 To run the code:
-    > python electra_nn.py --local --checkpoint None --doTrain True --doTestOnUnseenData True --trainfile 'train_EDOS_80.csv' --validationfile 'validation_EDOS_20.csv' --testfile 'dev_task_a_entries.csv' --testfile2 'test_task_a_entries.csv' --run '54_test_HF_large' --electraversion large
+    > python electra_nn.py --local False --checkpoint None --doTrain True --doTestOnUnseenData True --trainfile 'train_EDOS_80.csv' --validationfile 'validation_EDOS_20.csv' --testfile 'dev_task_a_entries.csv' --testfile2 'test_task_a_entries.csv' --run '54_test_HF_large' --electraversion large
 
-All the results for the electra+NN model is available in the 'ELECTRA+NN/results' folder
+* If the local switch set, all data paths will join with a prdefiene "./data" directory. Otherwise the data will be searchd in the root directory. 
+ 
+All the results for the electra+NN model is available in the 'ELECTRA+NN/results' folder.
+
 3. **Prompt-based Learning:** <br /> 
 In this approach, we employ T5 PLM in the prompting paradigm. We implement our model in [OpenPrompt](https://github.com/thunlp/OpenPrompt) framework. It supports loading transformer-based models directly from the huggingface. <br/>
 Two different experiments have been conducted in this approach: <br />
