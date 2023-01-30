@@ -9,7 +9,14 @@ The whole codes relted to pretrining is vailable in ELECTRA-Pretraining folder. 
     
     1.2 run the pretraining based o the parameters json file  
       > python run_pretraining.py --data-dir .  --model-name electra_small --hparams "hparams-small.json"
-
+    
+    1.3 convert the tensorflow model to pytorch one:  
+            > python convert_electra_original_tf_checkpoint_to_pytorch.py \  
+                --tf_checkpoint_path=output_electra_small88000 \  
+                --config_file=output_electra_small88000/config.json \  
+                --pytorch_dump_path=output_electra_small88000/pytorch/pytorch_model.bin \  
+                --discriminator_or_generator=discriminator   
+            
  The file hparms.json contains the output directory, number of steps, type of model and other parameters.  
  
 2. **Typical Finetuning:** <br />
