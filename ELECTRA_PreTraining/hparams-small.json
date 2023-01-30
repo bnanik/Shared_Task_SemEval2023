@@ -1,0 +1,1 @@
+{ "model_dir": "output_electra_small88000",  "do_train": "True", "do_eval": "False", "model_size": "small", "do_lower_case": "false", "vocab_size": 119547, "num_train_steps": 88000, "save_checkpoints_steps": 10000, "train_batch_size": 32,  "learning_rate": 2e-4, "generator_hidden_size": 1.0}
