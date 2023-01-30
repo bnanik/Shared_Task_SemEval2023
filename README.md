@@ -2,11 +2,21 @@ This repo provides the code and data for our system to address the shared task S
 We developed six models in three different paradigms, namely **further pretraining**, **typical finetuning**, and **prompt-based learning**.
 
 1. **Further Pre-training:** <br />
-TO  BE ADDED....
+The whole codes relted to pretrining is vailable in ELECTRA-Pretraining folder. The code is from the official ELECTRA github repo (https://github.com/google-research/electra). To run the pretraining process:  
+    1.1 build the dataset  
+      > python build_pretraining_dataset.py   --corpus-dir ./corpus  --vocab-file vocab.txt  --output-dir pretrain_tfrecords  --max-seq-length 128   --blanks-separate-docs False   --no-lower-case   --num-processes 10  
+    
+    1.2 run the pretraining based o the parameters json file  
+      > python run_pretraining.py --data-dir .  --model-name electra_small --hparams "hparams-small.json"
 
+ The file hparms.json contains the output directory, number of steps, type of model and other parameters.  
+ 
 2. **Typical Finetuning:** <br />
-TO  BE ADDED....
+The main python file is electra_nn for this purpose. It calles other dependecies and related files.
+To run the code:
+    > python electra_nn.py --local --checkpoint None --doTrain True --doTestOnUnseenData True --trainfile 'train_EDOS_80.csv' --validationfile 'validation_EDOS_20.csv' --testfile 'dev_task_a_entries.csv' --testfile2 'test_task_a_entries.csv' --run '54_test_HF_large' --electraversion large
 
+All the results for the electra+NN model is available in the 'ELECTRA+NN/results' folder
 3. **Prompt-based Learning:** <br /> 
 In this approach, we employ T5 PLM in the prompting paradigm. We implement our model in [OpenPrompt](https://github.com/thunlp/OpenPrompt) framework. It supports loading transformer-based models directly from the huggingface. <br/>
 Two different experiments have been conducted in this approach: <br />
