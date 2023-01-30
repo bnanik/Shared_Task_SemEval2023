@@ -13,5 +13,5 @@ Two different experiments have been conducted in this approach: <br />
 * Training over EDOS data
   - To repeat this experiment try to run the [Prompt_based_classifier_EDOS_Data.ipynb](https://github.com/bnanik/Shared_Task_SemEval2023/blob/main/Prompt_based_classifier_EDOS_Data.ipynb) file. All the required datasets are available in the data folder. 
 
-* Training over Augmented, Combined, Preprocessed, and Oversampled datasets (the datasets are explained in the paper)
+* Training over Augmented, Combined, Preprocessed, and Oversampled datasets (The datasets are explained in detail in the paper)
   - To repeat these set of experiments try to run the [prompt_based_classifier_Data_manipulation.ipynb](https://github.com/bnanik/Shared_Task_SemEval2023/blob/main/prompt_based_classifier_Data_manipulation.ipynb) file. All the required datasets are available in the data folder. This file can be run using one of the datasets at a time, namely augmented, combined, preprocessed, and oversampled datasets.
